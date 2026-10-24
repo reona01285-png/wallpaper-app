@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>そのまま壁紙</title>
+<meta name="description" content="画像の縦横比を変えずに、スマホ・タブレット・PCの壁紙を作ります。">
+<meta name="theme-color" content="#2b4fd6">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="そのまま壁紙">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* レイアウト: 左にプレビュー(額縁に入った端末画面)、右に操作パネル。スマホでは上にプレビューを固定し下で操作 */
+:root {
+  --bg: #e9ecf1;
+  --surface: #ffffff;
+  --fg: #1a1e27;
+  --muted: #5d6574;
+  --line: #d3d8e1;
+  --accent: #2b4fd6;
+  --accent-fg: #ffffff;
+  --stage: #d9dee7;
+  --font-display: "Dela Gothic One", "Hiragino Sans", "Yu Gothic", sans-serif;
+  --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "Consolas", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111318; --surface: #1a1d25; --fg: #e8eaf0; --muted: #9aa1af;
+    --line: #2c313c; --accent: #7d97ff; --accent-fg: #0d1020; --stage: #0b0d11;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111318; --surface: #1a1d25; --fg: #e8eaf0; --muted: #9aa1af;
+  --line: #2c313c; --accent: #7d97ff; --accent-fg: #0d1020; --stage: #0b0d11;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { margin: 0; }
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.6;
+}
+.app {
+  display: grid; grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 24px; padding: 20px 24px; max-width: 1280px; margin: 0 auto;
+  min-height: 100%;
+}
+header.top { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+h1 { font-family: var(--font-display); font-weight: 400; font-size: 26px; margin: 0; letter-spacing: .02em; }
+.tagline { color: var(--muted); margin: 0; font-size: 14px; }
+
+/* プレビュー */
+.stage {
+  position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px);
+  height: calc(100vh - 120px); min-height: 420px;
+  background: var(--stage); border-radius: 14px;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.stage-box { flex: 1; min-height: 0; position: relative; display: grid; place-items: center; padding: 20px; }
+.frame {
+  position: relative; overflow: hidden; touch-action: none; cursor: grab;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.25), 0 18px 40px rgba(0,0,0,.28);
+  background: #000;
+}
+.frame:active { cursor: grabbing; }
+.frame canvas { display: block; width: 100%; height: 100%; }
+.guide { position: absolute; inset: 0; pointer-events: none; color: #fff; text-shadow: 0 1px 6px rgba(0,0,0,.35); }
+.guide .date { position: absolute; left: 0; right: 0; text-align: center; font-weight: 500; opacity: .9; }
+.guide .clock { position: absolute; left: 0; right: 0; text-align: center; font-family: var(--font-body); font-weight: 700; line-height: 1; letter-spacing: -.02em; opacity: .92; }
+.guide .btn { position: absolute; border-radius: 50%; background: rgba(255,255,255,.22); backdrop-filter: blur(6px); }
+.stage-foot {
+  display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 8px 16px 12px; font-size: 12.5px; color: var(--muted);
+}
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+
+/* 操作パネル */
+.panel { display: flex; flex-direction: column; gap: 14px; min-width: 0; padding-bottom: 32px; }
+.sec { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+.sec h2 { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .12em; color: var(--muted); }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row > * { min-width: 0; }
+label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; }
+.field-head { display: flex; justify-content: space-between; align-items: baseline; }
+.field-head .num { color: var(--muted); font-size: 12.5px; }
+select, input[type="number"] {
+  font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 10px; width: 100%;
+}
+input[type="number"] { font-family: var(--font-num); width: 6.5em; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+input[type="color"] { width: 44px; height: 36px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+button, .filebtn {
+  font: inherit; font-size: 14px; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; cursor: pointer;
+}
+button:hover, .filebtn:hover { border-color: var(--accent); }
+button:focus-visible, .filebtn:focus-within, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 700; padding: 12px 16px; width: 100%; font-size: 16px; }
+.filebtn { display: inline-flex; align-items: center; font-weight: 700; background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.filebtn input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.seg { display: grid; grid-template-columns: repeat(auto-fit, minmax(58px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: var(--surface); padding: 8px 4px; white-space: nowrap; font-size: 13.5px; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); font-weight: 700; }
+.hint { font-size: 12.5px; color: var(--muted); margin: 0; }
+.swatch { width: 28px; height: 28px; padding: 0; border-radius: 50%; }
+.check { display: flex; gap: 8px; align-items: center; font-size: 13.5px; }
+.check input { width: 18px; height: 18px; accent-color: var(--accent); }
+.times { color: var(--muted); }
+
+/* 保存フォールバック */
+.sheet { position: fixed; inset: 0; background: rgba(8,10,14,.82); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px 16px; z-index: 10; }
+.sheet img { max-width: 100%; max-height: 72vh; object-fit: contain; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+.sheet p { color: #f1f3f7; margin: 0; text-align: center; }
+.toast { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 20px); transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 11; }
+
+@media (max-width: 860px) {
+  .app { grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 14px 16px; }
+  .stage { top: env(safe-area-inset-top, 0px); height: 46vh; min-height: 300px; z-index: 2; }
+  .stage-box { padding: 12px; }
+  h1 { font-size: 22px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="app" lang="ja">
+  <header class="top">
+    <h1>そのまま壁紙</h1>
+    <p class="tagline">画像を伸ばさず、切らずに、壁紙サイズへ。余白はぼかしや色で埋めます。</p>
+  </header>
+
+  <section class="stage" aria-label="プレビュー">
+    <div class="stage-box" id="stageBox">
+      <div class="frame" id="frame">
+        <canvas id="preview"></canvas>
+        <div class="guide" id="guide" hidden>
+          <div class="date" id="gDate">10月24日 土曜日</div>
+          <div class="clock" id="gClock">9:41</div>
+          <div class="btn" id="gBtnL"></div>
+          <div class="btn" id="gBtnR"></div>
+        </div>
+      </div>
+    </div>
+    <div class="stage-foot">
+      <span id="srcInfo">サンプル画像</span>
+      <span>出力 <span class="num" id="outInfo">1206 × 2622</span></span>
+    </div>
+  </section>
+
+  <div class="panel">
+    <div class="sec">
+      <h2>画像</h2>
+      <div class="row">
+        <label class="filebtn">画像を選ぶ<input type="file" id="file" accept="image/*"></label>
+        <span class="hint">ドラッグ&ドロップ・貼り付けでも読み込めます</span>
+      </div>
+    </div>
+
+    <div class="sec">
+      <h2>壁紙のサイズ</h2>
+      <select id="preset" aria-label="端末"></select>
+      <div class="row">
+        <input type="number" id="outW" min="16" max="8192" aria-label="幅(px)">
+        <span class="times">×</span>
+        <input type="number" id="outH" min="16" max="8192" aria-label="高さ(px)">
+        <span class="hint">px</span>
+        <button id="swap" type="button" title="縦と横を入れ替え">縦横入替</button>
+      </div>
+      <label class="check" id="guideRow"><input type="checkbox" id="showGuide" checked>ロック画面の時計位置を表示(保存画像には入りません)</label>
+    </div>
+
+    <div class="sec">
+      <h2>配置</h2>
+      <label class="field">
+        <span class="field-head">拡大率<span class="num" id="scaleVal">100%</span></span>
+        <input type="range" id="scale" min="20" max="300" step="1" value="100">
+      </label>
+      <div class="row">
+        <button type="button" id="fitAll">全体を表示</button>
+        <button type="button" id="fitCover">画面を埋める</button>
+        <button type="button" id="center">中央に戻す</button>
+      </div>
+      <p class="hint">プレビューをドラッグで移動、2本指またはホイールで拡大縮小。100%は画像全体が収まる最大サイズです。</p>
+    </div>
+
+    <div class="sec">
+      <h2>背景</h2>
+      <div class="seg" role="group" aria-label="背景の種類">
+        <button type="button" data-bg="mirror" aria-pressed="true">なじませ</button>
+        <button type="button" data-bg="extend" aria-pressed="false">伸ばす</button>
+        <button type="button" data-bg="blur" aria-pressed="false">ぼかし</button>
+        <button type="button" data-bg="gradient" aria-pressed="false">グラデ</button>
+        <button type="button" data-bg="color" aria-pressed="false">単色</button>
+      </div>
+      <label class="field" id="blurField">
+        <span class="field-head">ぼかしの強さ<span class="num" id="blurVal">55</span></span>
+        <input type="range" id="blur" min="0" max="100" value="55">
+      </label>
+      <p class="hint" id="bgHint">画像の端を鏡のように折り返して続きを作り、離れるほどぼかしてなじませます。</p>
+      <div class="row" id="colorField" hidden>
+        <input type="color" id="color" value="#1b1f2a" aria-label="背景色">
+        <button type="button" class="swatch" data-color="#000000" style="background:#000000" aria-label="黒"></button>
+        <button type="button" class="swatch" data-color="#ffffff" style="background:#ffffff" aria-label="白"></button>
+        <button type="button" class="swatch" data-color="#2a2f3a" style="background:#2a2f3a" aria-label="チャコール"></button>
+        <button type="button" id="pickColor">画像から取得</button>
+      </div>
+      <label class="field">
+        <span class="field-head">背景を暗く<span class="num" id="dimVal">10%</span></span>
+        <input type="range" id="dim" min="0" max="80" value="10">
+      </label>
+    </div>
+
+    <div class="sec">
+      <h2>仕上げ</h2>
+      <label class="field">
+        <span class="field-head">画像の角の丸み<span class="num" id="radiusVal">0</span></span>
+        <input type="range" id="radius" min="0" max="100" value="0">
+      </label>
+      <label class="field">
+        <span class="field-head">画像の影<span class="num" id="shadowVal">0</span></span>
+        <input type="range" id="shadow" min="0" max="100" value="0">
+      </label>
+    </div>
+
+    <div class="sec">
+      <h2>保存</h2>
+      <div class="seg" role="group" aria-label="形式">
+        <button type="button" data-fmt="png" aria-pressed="true">PNG</button>
+        <button type="button" data-fmt="jpeg" aria-pressed="false">JPEG</button>
+      </div>
+      <button type="button" class="primary" id="save">壁紙を保存</button>
+      <p class="hint" id="saveHint">画像の縦横比はそのままです。PNGは劣化なし、JPEGはファイルが小さくなります。</p>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="sheet" hidden>
+  <img id="sheetImg" alt="作成した壁紙">
+  <p>画像を長押しして「写真に追加」(または「画像を保存」)で保存できます</p>
+  <button type="button" id="sheetClose">閉じる</button>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+document.documentElement.lang = 'ja';
+const $ = id => document.getElementById(id);
+
+// 端末の解像度プリセット(実ピクセル)
+const PRESETS = [
+  { g: 'iPhone', id: 'ip17', name: 'iPhone 17 / 17 Pro / 16 Pro', w: 1206, h: 2622, phone: true },
+  { g: 'iPhone', id: 'ip17pm', name: 'iPhone 17 Pro Max / 16 Pro Max', w: 1320, h: 2868, phone: true },
+  { g: 'iPhone', id: 'ipair', name: 'iPhone Air', w: 1260, h: 2736, phone: true },
+  { g: 'iPhone', id: 'ip16', name: 'iPhone 16 / 15 / 15 Pro / 14 Pro', w: 1179, h: 2556, phone: true },
+  { g: 'iPhone', id: 'ip16plus', name: 'iPhone 16 Plus / 15 Plus / 15 Pro Max', w: 1290, h: 2796, phone: true },
+  { g: 'iPhone', id: 'ip13', name: 'iPhone 14 / 13 / 13 Pro', w: 1170, h: 2532, phone: true },
+  { g: 'iPhone', id: 'ipse', name: 'iPhone SE (第2・3世代)', w: 750, h: 1334, phone: true },
+  { g: 'Android', id: 'andfhd', name: 'Android フルHD+ (多くの機種)', w: 1080, h: 2400, phone: true },
+  { g: 'Android', id: 'andqhd', name: 'Android QHD+', w: 1440, h: 3200, phone: true },
+  { g: 'タブレット', id: 'ipadpro13', name: 'iPad Pro 13インチ (M4)', w: 2064, h: 2752 },
+  { g: 'タブレット', id: 'ipadpro11', name: 'iPad Pro 11インチ (M4)', w: 1668, h: 2420 },
+  { g: 'タブレット', id: 'ipad11', name: 'iPad / iPad Air 11インチ', w: 1640, h: 2360 },
+  { g: 'タブレット', id: 'ipadmini', name: 'iPad mini', w: 1488, h: 2266 },
+  { g: 'タブレット', id: 'andtab', name: 'Androidタブレット WUXGA (10〜11インチの多く)', w: 1200, h: 1920 },
+  { g: 'タブレット', id: 'andtabhi', name: 'Androidタブレット WQXGA', w: 1600, h: 2560 },
+  { g: 'パソコン', id: 'fhd', name: 'フルHD', w: 1920, h: 1080 },
+  { g: 'パソコン', id: 'wqhd', name: 'WQHD', w: 2560, h: 1440 },
+  { g: 'パソコン', id: '4k', name: '4K', w: 3840, h: 2160 },
+  { g: 'パソコン', id: 'uw', name: 'ウルトラワイド', w: 3440, h: 1440 },
+  { g: 'パソコン', id: 'mba13', name: 'MacBook Air 13インチ', w: 2560, h: 1664 },
+  { g: 'その他', id: 'device', name: 'この端末の画面に合わせる', device: true },
+  { g: 'その他', id: 'custom', name: 'カスタム', custom: true },
+];
+
+const S = {
+  img: null, thumb: null, edges: null, srcName: 'サンプル画像',
+  W: 1206, H: 2622, phone: true, preset: 'ip17',
+  scale: 1, cx: 0.5, cy: 0.5,
+  bg: 'mirror', blur: 55, dim: 10, color: '#1b1f2a',
+  radius: 0, shadow: 0, fmt: 'png', guide: true,
+};
+
+const mk = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; };
+const ctxOf = c => { const x = c.getContext('2d'); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high'; return x; };
+
+// 半分ずつ縮小して、ギザつきの少ない縮小画像を作る
+function downscale(src, sx, sy, sw, sh, tw, th) {
+  tw = Math.max(1, Math.round(tw)); th = Math.max(1, Math.round(th));
+  let cur = src, cx = sx, cy = sy, cw = sw, ch = sh;
+  while (cw / 2 > tw && ch / 2 > th) {
+    const nw = Math.round(cw / 2), nh = Math.round(ch / 2);
+    const c = mk(nw, nh); ctxOf(c).drawImage(cur, cx, cy, cw, ch, 0, 0, nw, nh);
+    cur = c; cx = 0; cy = 0; cw = nw; ch = nh;
+  }
+  const out = mk(tw, th); ctxOf(out).drawImage(cur, cx, cy, cw, ch, 0, 0, tw, th);
+  return out;
+}
+
+function avg(data, idxs) {
+  let r = 0, g = 0, b = 0;
+  for (const i of idxs) { r += data[i]; g += data[i + 1]; b += data[i + 2]; }
+  const n = idxs.length;
+  return [r / n, g / n, b / n].map(Math.round);
+}
+const rgb = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+const hex = c => '#' + c.map(v => v.toString(16).padStart(2, '0')).join('');
+
+// 画像の上下左右の端の平均色(グラデ背景・単色の自動取得に使う)
+function computeEdges(img) {
+  const n = 32, c = downscale(img, 0, 0, img.width, img.height, n, n);
+  const d = ctxOf(c).getImageData(0, 0, n, n).data;
+  const at = (x, y) => (y * n + x) * 4;
+  const top = [], bottom = [], left = [], right = [];
+  for (let k = 0; k < n; k++) for (let j = 0; j < 2; j++) {
+    top.push(at(k, j)); bottom.push(at(k, n - 1 - j)); left.push(at(j, k)); right.push(at(n - 1 - j, k));
+  }
+  return { top: avg(d, top), bottom: avg(d, bottom), left: avg(d, left), right: avg(d, right), all: avg(d, [...top, ...bottom, ...left, ...right]) };
+}
+
+function setImage(img, name) {
+  S.img = img; S.srcName = name;
+  const long = Math.max(img.width, img.height), k = Math.min(1, 2048 / long);
+  S.thumb = downscale(img, 0, 0, img.width, img.height, img.width * k, img.height * k);
+  S.edges = computeEdges(img);
+  S.scale = 1; S.cx = 0.5; S.cy = 0.5;
+  bgCache = null;
+  $('srcInfo').textContent = `${name} ・ ${img.width} × ${img.height}`;
+  syncUI(); draw();
+}
+
+function imageRect(W, H) {
+  const iw = S.img.width, ih = S.img.height;
+  const k = Math.min(W / iw, H / ih) * S.scale;
+  const dw = iw * k, dh = ih * k;
+  return { x: S.cx * W - dw / 2, y: S.cy * H - dh / 2, w: dw, h: dh };
+}
+
+function roundPath(ctx, x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// キャンバス全体を縮小→拡大してぼかす(f: 縮小率)
+function blurCanvas(src, f) {
+  const W = src.width, H = src.height;
+  if (f <= 1.05) { const c = mk(W, H); ctxOf(c).drawImage(src, 0, 0); return c; }
+  let small = downscale(src, 0, 0, W, H, W / f, H / f);
+  while (small.width * 2 < W && small.height * 2 < H) {
+    const up = mk(small.width * 2, small.height * 2);
+    ctxOf(up).drawImage(small, 0, 0, up.width, up.height);
+    small = up;
+  }
+  const out = mk(W, H); ctxOf(out).drawImage(small, 0, 0, W, H);
+  return out;
+}
+
+// 画像の周囲に「続き」を作る: mirror=鏡のように折り返す / extend=端の色を外へ伸ばす
+function continuation(W, H, src, r, mode) {
+  const c = mk(W, H), ctx = ctxOf(c);
+  const sw = src.width, sh = src.height;
+  if (mode === 'mirror') {
+    const nx = Math.ceil(Math.max(r.x, W - r.x - r.w) / r.w) + 1;
+    const ny = Math.ceil(Math.max(r.y, H - r.y - r.h) / r.h) + 1;
+    for (let j = -ny; j <= ny; j++) for (let i = -nx; i <= nx; i++) {
+      const x = r.x + i * r.w, y = r.y + j * r.h;
+      if (x > W || y > H || x + r.w < 0 || y + r.h < 0) continue;
+      const fx = Math.abs(i) % 2 === 1, fy = Math.abs(j) % 2 === 1;
+      ctx.setTransform(fx ? -1 : 1, 0, 0, fy ? -1 : 1, x + (fx ? r.w : 0), y + (fy ? r.h : 0));
+      ctx.drawImage(src, 0, 0, r.w, r.h);
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  } else {
+    const L = r.x, T = r.y, R = r.x + r.w, B = r.y + r.h;
+    const part = (sx, sy, sW, sH, dx, dy, dW, dH) => { if (dW > 0 && dH > 0) ctx.drawImage(src, sx, sy, sW, sH, dx, dy, dW, dH); };
+    part(0, 0, sw, sh, L, T, r.w, r.h);
+    part(0, 0, sw, 1, L, 0, r.w, T);                 // 上
+    part(0, sh - 1, sw, 1, L, B, r.w, H - B);        // 下
+    part(0, 0, 1, sh, 0, T, L, r.h);                 // 左
+    part(sw - 1, 0, 1, sh, R, T, W - R, r.h);        // 右
+    part(0, 0, 1, 1, 0, 0, L, T);                    // 四隅
+    part(sw - 1, 0, 1, 1, R, 0, W - R, T);
+    part(0, sh - 1, 1, 1, 0, B, L, H - B);
+    part(sw - 1, sh - 1, 1, 1, R, B, W - R, H - B);
+  }
+  return c;
+}
+
+// 画像から離れるほど強くぼかしていく(境目は影のぼかしでなめらかにつなぐ)
+function progressiveBlur(base, r) {
+  const W = base.width, H = base.height;
+  const D = Math.max(r.x, r.y, W - r.x - r.w, H - r.y - r.h, 1);
+  const out = mk(W, H), octx = ctxOf(out);
+  octx.drawImage(base, 0, 0);
+  const levels = 5, maxF = 1 + S.blur * 0.5 * Math.max(W, H) / 2000;
+  for (let k = 1; k <= levels; k++) {
+    const t = k / levels;
+    const layer = blurCanvas(base, 1 + (maxF - 1) * t * t);
+    const grow = D * (k - 0.6) / levels * 0.8, feather = D / levels * 1.2;
+    const mask = mk(W, H), m = mask.getContext('2d');
+    m.fillStyle = '#000'; m.fillRect(0, 0, W, H);
+    m.globalCompositeOperation = 'destination-out';
+    m.shadowColor = '#000'; m.shadowBlur = feather; m.shadowOffsetX = W * 4;
+    m.fillRect(r.x - grow - W * 4, r.y - grow, r.w + grow * 2, r.h + grow * 2);
+    const lc = layer.getContext('2d');
+    lc.globalCompositeOperation = 'destination-in';
+    lc.drawImage(mask, 0, 0);
+    octx.drawImage(layer, 0, 0);
+  }
+  return out;
+}
+
+// 背景(プレビュー用はキャッシュする)
+let bgCache = null;
+function renderBg(W, H, src) {
+  const c = mk(W, H), ctx = ctxOf(c);
+  if (S.bg === 'mirror' || S.bg === 'extend') {
+    const r = imageRect(W, H);
+    ctx.drawImage(progressiveBlur(continuation(W, H, src, r, S.bg), r), 0, 0);
+  } else if (S.bg === 'blur') {
+    const src = S.thumb, tw = src.width, th = src.height;
+    // 画面を覆うように少し大きめに切り出してから縮小→拡大でぼかす
+    const cover = Math.max(W / tw, H / th) * 1.06;
+    const sw = W / cover, sh = H / cover;
+    const f = 1 + S.blur * 0.45 * Math.max(W, H) / 2000;
+    let small = downscale(src, (tw - sw) / 2, (th - sh) / 2, sw, sh, W / f, H / f);
+    while (small.width * 2 < W && small.height * 2 < H) {
+      const up = mk(small.width * 2, small.height * 2);
+      ctxOf(up).drawImage(small, 0, 0, up.width, up.height);
+      small = up;
+    }
+    ctx.drawImage(small, 0, 0, W, H);
+  } else if (S.bg === 'gradient') {
+    const e = S.edges;
+    const r = imageRect(W, H);
+    const vertical = (H - r.h) >= (W - r.w);
+    const g = vertical ? ctx.createLinearGradient(0, 0, 0, H) : ctx.createLinearGradient(0, 0, W, 0);
+    g.addColorStop(0, rgb(vertical ? e.top : e.left));
+    g.addColorStop(1, rgb(vertical ? e.bottom : e.right));
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  } else {
+    ctx.fillStyle = S.color; ctx.fillRect(0, 0, W, H);
+  }
+  if (S.dim > 0) { ctx.fillStyle = `rgba(0,0,0,${S.dim / 100})`; ctx.fillRect(0, 0, W, H); }
+  return c;
+}
+
+function render(ctx, W, H, src, bg) {
+  ctx.clearRect(0, 0, W, H);
+  ctx.drawImage(bg, 0, 0, W, H);
+  const r = imageRect(W, H);
+  const rad = S.radius / 100 * Math.min(r.w, r.h) * 0.25;
+  if (S.shadow > 0) {
+    // 影だけを描く(本体は画面外に置き、影だけを画面内へずらす)
+    const off = W * 4, blur = S.shadow / 100 * Math.min(W, H) * 0.06;
+    ctx.save();
+    ctx.shadowColor = `rgba(0,0,0,${0.25 + S.shadow / 100 * 0.4})`;
+    ctx.shadowBlur = blur; ctx.shadowOffsetX = off; ctx.shadowOffsetY = blur * 0.35;
+    ctx.fillStyle = '#000';
+    roundPath(ctx, r.x - off, r.y, r.w, r.h, rad); ctx.fill();
+    ctx.restore();
+  }
+  ctx.save();
+  if (rad > 0) { roundPath(ctx, r.x, r.y, r.w, r.h, rad); ctx.clip(); }
+  ctx.drawImage(src, r.x, r.y, r.w, r.h);
+  ctx.restore();
+}
+
+// プレビュー
+const pv = $('preview'), frame = $('frame');
+let view = { k: 1, cssW: 1, cssH: 1 };
+let raf = 0;
+function draw() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; drawNow(); }); }
+function drawNow() {
+  if (!S.img) return;
+  const box = $('stageBox'), cs = getComputedStyle(box);
+  const bw = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const bh = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  const k = Math.min(bw / S.W, bh / S.H);
+  const cssW = Math.max(1, Math.floor(S.W * k)), cssH = Math.max(1, Math.floor(S.H * k));
+  view = { k, cssW, cssH };
+  frame.style.width = cssW + 'px'; frame.style.height = cssH + 'px';
+  frame.style.borderRadius = S.phone ? (cssW * 0.12) + 'px' : '6px';
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const pw = Math.round(cssW * dpr), ph = Math.round(cssH * dpr);
+  if (pv.width !== pw || pv.height !== ph) { pv.width = pw; pv.height = ph; }
+  const key = [pw, ph, S.bg, S.blur, S.dim, S.color, S.bg === 'blur' || S.bg === 'color' ? '' : [S.scale, S.cx, S.cy].join(), S.srcName, S.img.width].join('|');
+  if (!bgCache || bgCache.key !== key) bgCache = { key, c: renderBg(pw, ph, S.thumb) };
+  render(ctxOf(pv), pw, ph, S.thumb, bgCache.c);
+  layoutGuide(cssW, cssH);
+}
+
+function layoutGuide(w, h) {
+  const g = $('guide');
+  const show = S.guide && S.phone && S.H > S.W;
+  g.hidden = !show;
+  if (!show) return;
+  const d = $('gDate'), c = $('gClock');
+  d.style.top = (h * 0.075) + 'px'; d.style.fontSize = (w * 0.05) + 'px';
+  c.style.top = (h * 0.095) + 'px'; c.style.fontSize = (w * 0.24) + 'px';
+  const bs = w * 0.13, by = h - h * 0.055 - bs;
+  for (const [id, x] of [['gBtnL', w * 0.12], ['gBtnR', w - w * 0.12 - bs]]) {
+    const b = $(id); b.style.width = b.style.height = bs + 'px'; b.style.left = x + 'px'; b.style.top = by + 'px';
+  }
+}
+(function setDate() {
+  const now = new Date(), wd = '日月火水木金土'[now.getDay()];
+  $('gDate').textContent = `${now.getMonth() + 1}月${now.getDate()}日 ${wd}曜日`;
+  $('gClock').textContent = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+})();
+
+// ドラッグ・ピンチ・ホイール
+const pointers = new Map();
+let pinch = null;
+frame.addEventListener('pointerdown', e => {
+  frame.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), scale: S.scale };
+  }
+});
+frame.addEventListener('pointermove', e => {
+  const p = pointers.get(e.pointerId); if (!p) return;
+  const nx = e.clientX, ny = e.clientY;
+  if (pointers.size === 1) {
+    S.cx += (nx - p.x) / view.cssW; S.cy += (ny - p.y) / view.cssH;
+  } else if (pointers.size === 2 && pinch) {
+    p.x = nx; p.y = ny;
+    const [a, b] = [...pointers.values()];
+    setScale(pinch.scale * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d);
+  }
+  p.x = nx; p.y = ny;
+  draw();
+});
+const endPtr = e => { pointers.delete(e.pointerId); if (pointers.size < 2) pinch = null; };
+frame.addEventListener('pointerup', endPtr);
+frame.addEventListener('pointercancel', endPtr);
+frame.addEventListener('wheel', e => { e.preventDefault(); setScale(S.scale * Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+frame.addEventListener('dblclick', () => { S.cx = 0.5; S.cy = 0.5; draw(); });
+
+function setScale(v) { S.scale = Math.min(3, Math.max(0.2, v)); syncUI(); draw(); }
+function coverScale() {
+  const iw = S.img.width, ih = S.img.height;
+  return Math.max(S.W / iw, S.H / ih) / Math.min(S.W / iw, S.H / ih);
+}
+
+// UI
+const presetSel = $('preset');
+(function buildPresets() {
+  let group = null, cur = '';
+  for (const p of PRESETS) {
+    if (p.g !== cur) { group = document.createElement('optgroup'); group.label = p.g; presetSel.appendChild(group); cur = p.g; }
+    const o = document.createElement('option'); o.value = p.id;
+    o.textContent = p.custom || p.device ? p.name : `${p.name} (${p.w}×${p.h})`;
+    group.appendChild(o);
+  }
+})();
+
+function setSize(w, h) {
+  w = Math.round(Math.min(8192, Math.max(16, w || 16)));
+  h = Math.round(Math.min(8192, Math.max(16, h || 16)));
+  // iPhoneのSafariは約1600万画素を超えるcanvasを作れないので抑える
+  const maxArea = 16_000_000;
+  if (w * h > maxArea) { const f = Math.sqrt(maxArea / (w * h)); w = Math.floor(w * f); h = Math.floor(h * f); toast('大きすぎるため 1600万画素以内に縮めました'); }
+  S.W = w; S.H = h; bgCache = null; syncUI(); draw();
+}
+
+presetSel.addEventListener('change', () => {
+  const p = PRESETS.find(x => x.id === presetSel.value);
+  S.preset = p.id;
+  if (p.custom) { S.phone = false; syncUI(); draw(); return; }
+  if (p.device) {
+    const dpr = window.devicePixelRatio || 1;
+    S.phone = Math.min(screen.width, screen.height) < 600;
+    setSize(screen.width * dpr, screen.height * dpr);
+  } else { S.phone = !!p.phone; setSize(p.w, p.h); }
+  try { localStorage.setItem('wp.preset', p.id); } catch (e) {}
+});
+const toCustom = () => { S.preset = 'custom'; presetSel.value = 'custom'; };
+$('outW').addEventListener('change', e => { toCustom(); setSize(+e.target.value, S.H); });
+$('outH').addEventListener('change', e => { toCustom(); setSize(S.W, +e.target.value); });
+$('swap').addEventListener('click', () => setSize(S.H, S.W));
+$('showGuide').addEventListener('change', e => { S.guide = e.target.checked; draw(); });
+
+$('scale').addEventListener('input', e => setScale(e.target.value / 100));
+$('fitAll').addEventListener('click', () => { S.scale = 1; S.cx = S.cy = 0.5; syncUI(); draw(); });
+$('fitCover').addEventListener('click', () => { S.cx = S.cy = 0.5; setScale(coverScale()); });
+$('center').addEventListener('click', () => { S.cx = S.cy = 0.5; draw(); });
+
+document.querySelectorAll('[data-bg]').forEach(b => b.addEventListener('click', () => { S.bg = b.dataset.bg; syncUI(); draw(); }));
+document.querySelectorAll('[data-fmt]').forEach(b => b.addEventListener('click', () => { S.fmt = b.dataset.fmt; syncUI(); }));
+document.querySelectorAll('[data-color]').forEach(b => b.addEventListener('click', () => { S.color = b.dataset.color; syncUI(); draw(); }));
+$('pickColor').addEventListener('click', () => { S.color = hex(S.edges.all); syncUI(); draw(); });
+$('color').addEventListener('input', e => { S.color = e.target.value; draw(); });
+for (const id of ['blur', 'dim', 'radius', 'shadow']) {
+  $(id).addEventListener('input', e => { S[id] = +e.target.value; syncUI(); draw(); });
+}
+
+const BG_HINT = {
+  mirror: '画像の端を鏡のように折り返して続きを作り、離れるほどぼかしてなじませます。',
+  extend: '画像のいちばん端の色をそのまま外へ伸ばし、離れるほどぼかします。',
+  blur: '画像を画面いっぱいに拡大して、全体をぼかした背景にします。',
+  gradient: '画像の端の色から、余白をグラデーションで塗ります。',
+  color: '好きな色で塗ります。「画像から取得」で端の平均色を使えます。',
+};
+function syncUI() {
+  presetSel.value = S.preset;
+  $('outW').value = S.W; $('outH').value = S.H;
+  $('outInfo').textContent = `${S.W} × ${S.H}`;
+  $('scale').value = Math.round(S.scale * 100);
+  $('scaleVal').textContent = Math.round(S.scale * 100) + '%';
+  $('blurVal').textContent = S.blur; $('dimVal').textContent = S.dim + '%';
+  $('radiusVal').textContent = S.radius; $('shadowVal').textContent = S.shadow;
+  $('color').value = S.color;
+  document.querySelectorAll('[data-bg]').forEach(b => b.setAttribute('aria-pressed', b.dataset.bg === S.bg));
+  document.querySelectorAll('[data-fmt]').forEach(b => b.setAttribute('aria-pressed', b.dataset.fmt === S.fmt));
+  $('blurField').hidden = !['blur', 'mirror', 'extend'].includes(S.bg);
+  $('bgHint').textContent = BG_HINT[S.bg];
+  $('colorField').hidden = S.bg !== 'color';
+  $('guideRow').hidden = !S.phone;
+}
+
+// 画像の読み込み
+function loadFile(file) {
+  if (!file || !file.type.startsWith('image/')) { toast('画像ファイルを選んでください'); return; }
+  const url = URL.createObjectURL(file), img = new Image();
+  img.onload = () => setImage(img, file.name || '貼り付けた画像');
+  img.onerror = () => toast('この画像は読み込めませんでした。JPEG・PNG・WebPを試してください');
+  img.src = url;
+}
+$('file').addEventListener('change', e => loadFile(e.target.files[0]));
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => { e.preventDefault(); loadFile(e.dataTransfer.files[0]); });
+window.addEventListener('paste', e => {
+  const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
+  if (item) loadFile(item.getAsFile());
+});
+
+// 保存
+
+$('save').addEventListener('click', async () => {
+  const btn = $('save'); btn.disabled = true; btn.textContent = '作成中…';
+  try {
+    await new Promise(r => setTimeout(r, 30));
+    const out = mk(S.W, S.H);
+    render(ctxOf(out), S.W, S.H, S.img, renderBg(S.W, S.H, S.img));
+    const type = S.fmt === 'png' ? 'image/png' : 'image/jpeg';
+    const blob = await new Promise(r => out.toBlob(r, type, 0.93));
+    if (!blob) throw new Error('blob');
+    const name = `wallpaper_${S.W}x${S.H}.${S.fmt === 'png' ? 'png' : 'jpg'}`;
+    // スマホ・タブレットは共有シートから「画像を保存」、PCは通常のダウンロード
+    const file = new File([blob], name, { type });
+    const touch = matchMedia('(pointer: coarse)').matches;
+    if (touch && navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); return; }
+      catch (err) { if (err?.name === 'AbortError') return; }
+    }
+    if ('download' in HTMLAnchorElement.prototype && !touch) {
+      const a = document.createElement('a'), url = URL.createObjectURL(blob);
+      a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      toast('ダウンロードしました');
+      return;
+    }
+    showSheet(blob);
+  } catch (e) {
+    toast('作成に失敗しました。サイズを小さくして試してください');
+  } finally { btn.disabled = false; btn.textContent = '壁紙を保存'; }
+});
+
+let sheetUrl = null;
+function showSheet(blob) {
+  if (sheetUrl) URL.revokeObjectURL(sheetUrl);
+  sheetUrl = URL.createObjectURL(blob);
+  $('sheetImg').src = sheetUrl; $('sheet').hidden = false;
+}
+$('sheetClose').addEventListener('click', () => { $('sheet').hidden = true; });
+
+let toastTimer = 0;
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2600);
+}
+
+window.addEventListener('resize', () => { bgCache = null; draw(); });
+if (window.ResizeObserver) new ResizeObserver(() => draw()).observe($('stageBox'));
+
+// 起動時のサンプル(横長の夕景を描く)
+function sampleImage() {
+  const w = 1600, h = 1000, c = mk(w, h), x = ctxOf(c);
+  const sky = x.createLinearGradient(0, 0, 0, h * 0.7);
+  sky.addColorStop(0, '#24305e'); sky.addColorStop(0.55, '#c8667a'); sky.addColorStop(1, '#f5b26b');
+  x.fillStyle = sky; x.fillRect(0, 0, w, h);
+  x.fillStyle = '#ffe1a8'; x.beginPath(); x.arc(w * 0.62, h * 0.6, 90, 0, Math.PI * 2); x.fill();
+  const ridge = (base, amp, col, seed) => {
+    x.fillStyle = col; x.beginPath(); x.moveTo(0, h);
+    for (let i = 0; i <= w; i += 8) x.lineTo(i, base - amp * (Math.sin(i / 170 + seed) * 0.6 + Math.sin(i / 61 + seed * 2) * 0.25 + Math.sin(i / 23 + seed) * 0.08));
+    x.lineTo(w, h); x.closePath(); x.fill();
+  };
+  ridge(h * 0.66, 90, '#7a4a6e', 1); ridge(h * 0.76, 70, '#4b3358', 3); ridge(h * 0.88, 50, '#2a1f3a', 5);
+  const sea = x.createLinearGradient(0, h * 0.88, 0, h);
+  sea.addColorStop(0, '#3b2c48'); sea.addColorStop(1, '#171222');
+  x.fillStyle = sea; x.fillRect(0, h * 0.9, w, h * 0.1);
+  return c;
+}
+
+try { const saved = localStorage.getItem('wp.preset'); const p = PRESETS.find(q => q.id === saved && !q.custom && !q.device); if (p) { S.preset = p.id; S.W = p.w; S.H = p.h; S.phone = !!p.phone; } } catch (e) {}
+setImage(sampleImage(), 'サンプル画像');
+
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
