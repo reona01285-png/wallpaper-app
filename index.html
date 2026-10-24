@@ -75,6 +75,9 @@ h1 { font-family: var(--font-display); font-weight: 400; font-size: 26px; margin
   background: #000;
 }
 .frame:active { cursor: grabbing; }
+.frame.erasing { cursor: crosshair; }
+#eraseToggle[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 700; }
+button:disabled { opacity: .45; cursor: default; }
 .frame canvas { display: block; width: 100%; height: 100%; }
 .guide { position: absolute; inset: 0; pointer-events: none; color: #fff; text-shadow: 0 1px 6px rgba(0,0,0,.35); }
 .guide .date { position: absolute; left: 0; right: 0; text-align: center; font-weight: 500; opacity: .9; }
@@ -215,6 +218,10 @@ button:focus-visible, .filebtn:focus-within, select:focus-visible, input:focus-v
         <input type="range" id="blur" min="0" max="100" value="55">
       </label>
       <p class="hint" id="bgHint">画像の端を鏡のように折り返して続きを作り、離れるほどぼかしてなじませます。</p>
+      <label class="field" id="aiRangeField" hidden>
+        <span class="field-head">AIで描く範囲<span class="num" id="aiRangeVal">30%</span></span>
+        <input type="range" id="aiRange" min="5" max="100" value="30">
+      </label>
       <p class="ai-status" id="aiStatus" hidden></p>
       <div class="row" id="colorField" hidden>
         <input type="color" id="color" value="#1b1f2a" aria-label="背景色">
@@ -227,6 +234,21 @@ button:focus-visible, .filebtn:focus-within, select:focus-visible, input:focus-v
         <span class="field-head">背景を暗く<span class="num" id="dimVal">10%</span></span>
         <input type="range" id="dim" min="0" max="80" value="10">
       </label>
+    </div>
+
+    <div class="sec">
+      <h2>不要なものを消す</h2>
+      <button type="button" id="eraseToggle" aria-pressed="false">消しゴムを使う</button>
+      <label class="field">
+        <span class="field-head">ペンの太さ<span class="num" id="brushVal">6</span></span>
+        <input type="range" id="brush" min="1" max="20" value="6">
+      </label>
+      <div class="row">
+        <button type="button" id="eraseUndo">1つ戻す</button>
+        <button type="button" id="eraseClear">すべて戻す</button>
+      </div>
+      <p class="hint">消しゴムをオンにして、消したい部分をプレビューの上でなぞってください。AIが周りに合わせて埋めます。オンの間は画像を動かせません。</p>
+      <p class="ai-status" id="eraseStatus" hidden></p>
     </div>
 
     <div class="sec">
@@ -295,7 +317,7 @@ const S = {
   img: null, thumb: null, edges: null, srcName: 'サンプル画像',
   W: 1206, H: 2622, phone: true, preset: 'ip17',
   scale: 1, cx: 0.5, cy: 0.5,
-  bg: 'mirror', blur: 55, dim: 10, color: '#1b1f2a',
+  bg: 'mirror', aiRange: 30, blur: 55, dim: 10, color: '#1b1f2a',
   radius: 0, shadow: 0, fmt: 'png', guide: true,
 };
 
@@ -336,13 +358,29 @@ function computeEdges(img) {
   return { top: avg(d, top), bottom: avg(d, bottom), left: avg(d, left), right: avg(d, right), all: avg(d, [...top, ...bottom, ...left, ...right]) };
 }
 
+// 上下左右それぞれ端の細い帯(3%)の色の中央値
+function edgeMedians(img) {
+  const k = 160 / Math.max(img.width, img.height);
+  const c = downscale(img, 0, 0, img.width, img.height, img.width * k, img.height * k);
+  const w = c.width, h = c.height, d = ctxOf(c).getImageData(0, 0, w, h).data;
+  const bw = Math.max(1, Math.round(w * 0.03)), bh = Math.max(1, Math.round(h * 0.03));
+  const med = (x0, y0, x1, y1) => {
+    const ch = [[], [], []];
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const i = (y * w + x) * 4; ch[0].push(d[i]); ch[1].push(d[i + 1]); ch[2].push(d[i + 2]); }
+    return ch.map(a => { a.sort((p, q) => p - q); return a[a.length >> 1]; });
+  };
+  return { top: med(0, 0, w, bh), bottom: med(0, h - bh, w, h), left: med(0, 0, bw, h), right: med(w - bw, 0, w, h) };
+}
+
 function setImage(img, name) {
   S.img = img; S.srcName = name;
   const long = Math.max(img.width, img.height), k = Math.min(1, 2048 / long);
   S.thumb = downscale(img, 0, 0, img.width, img.height, img.width * k, img.height * k);
   S.edges = computeEdges(img);
+  S.edgeMed = edgeMedians(img);
   S.scale = 1; S.cx = 0.5; S.cy = 0.5;
   bgCache = null;
+  if (typeof ER !== 'undefined') { ER.strokes = []; ER.ver++; ER.result = null; syncErase(); }
   $('srcInfo').textContent = `${name} ・ ${img.width} × ${img.height}`;
   syncUI(); draw();
 }
@@ -462,6 +500,27 @@ function renderBg(W, H, src) {
     if (aiReady()) {
       base = mk(W, H); const bctx = ctxOf(base);
       bctx.drawImage(aiResult.c, 0, 0, W, H);
+      // AIは遠くほど近くの模様を写してしまうので、範囲の外は画像の端の色を強くぼかしたものに置き換える
+      if (S.aiRange < 100) {
+        const D = Math.max(r.x, r.y, W - r.x - r.w, H - r.y - r.h, 1);
+        // 範囲の外は辺ごとに1色(端の帯の中央値。紙なら紙の色、風景なら空や地面の色)で塗り、境をぼかす
+        const far = mk(W, H), fx = far.getContext('2d'), em = S.edgeMed;
+        const L = Math.max(0, r.x), T = Math.max(0, r.y), R = Math.min(W, r.x + r.w), B = Math.min(H, r.y + r.h);
+        const vertical = (H - r.h) >= (W - r.w);
+        const paint = (c, x, y, w, h) => { if (w > 0 && h > 0) { fx.fillStyle = rgb(c); fx.fillRect(x, y, w, h); } };
+        if (vertical) {
+          paint(em.left, 0, 0, W / 2, H); paint(em.right, W / 2, 0, W / 2, H);
+          paint(em.top, 0, 0, W, T); paint(em.bottom, 0, B, W, H - B);
+        } else {
+          paint(em.top, 0, 0, W, H / 2); paint(em.bottom, 0, H / 2, W, H / 2);
+          paint(em.left, 0, 0, L, H); paint(em.right, R, 0, W - R, H);
+        }
+        const smooth = blurCanvas(far, Math.max(4, Math.max(W, H) / 20));
+        const fctx = smooth.getContext('2d');
+        fctx.globalCompositeOperation = 'destination-in';
+        fctx.drawImage(distMask(W, H, r, D * S.aiRange / 100, D * 0.3), 0, 0);
+        bctx.drawImage(smooth, 0, 0);
+      }
     }
     else base = continuation(W, H, src, r, 'mirror');
     ctx.drawImage(progressiveBlur(base, r), 0, 0);
@@ -521,10 +580,45 @@ function render(ctx, W, H, src, bg) {
     roundPath(ctx, r.x - off, r.y, r.w, r.h, rad); ctx.fill();
     ctx.restore();
   }
+  if (S.bg === 'ai' && rad === 0 && aiReady()) {
+    // AIの部分との境目が線に見えないよう、余白に接する辺だけ画像の外周を内側から少し透かす
+    const layer = mk(W, H), lctx = ctxOf(layer);
+    lctx.drawImage(src, r.x, r.y, r.w, r.h);
+    lctx.globalCompositeOperation = 'destination-in';
+    lctx.drawImage(innerMask(W, H, r, Math.max(2, Math.min(r.w, r.h) * 0.02)), 0, 0);
+    ctx.drawImage(layer, 0, 0);
+    return;
+  }
   ctx.save();
   if (rad > 0) { roundPath(ctx, r.x, r.y, r.w, r.h, rad); ctx.clip(); }
   ctx.drawImage(src, r.x, r.y, r.w, r.h);
   ctx.restore();
+}
+
+// 画像の枠の内側で、余白に接する辺から feather の幅で 透明→不透明 になるマスク
+function innerMask(W, H, r, feather) {
+  const q = Math.max(1, Math.floor(feather / 6));
+  const w = Math.ceil(W / q) + 1, h = Math.ceil(H / q) + 1;
+  const T = r.y > 1, B = r.y + r.h < H - 1, L = r.x > 1, R = r.x + r.w < W - 1;
+  const c = mk(w, h), cx = c.getContext('2d'), id = cx.createImageData(w, h), d = id.data;
+  for (let j = 0; j < h; j++) {
+    const y = j * q;
+    for (let i = 0; i < w; i++) {
+      const x = i * q;
+      if (x < r.x || x > r.x + r.w || y < r.y || y > r.y + r.h) continue;
+      let m = Infinity;
+      if (T) m = Math.min(m, y - r.y);
+      if (B) m = Math.min(m, r.y + r.h - y);
+      if (L) m = Math.min(m, x - r.x);
+      if (R) m = Math.min(m, r.x + r.w - x);
+      let t = m / feather;
+      t = t >= 1 ? 1 : t <= 0 ? 0 : t * t * (3 - 2 * t);
+      d[(j * w + i) * 4 + 3] = Math.round(t * 255);
+    }
+  }
+  cx.putImageData(id, 0, 0);
+  const out = mk(W, H); ctxOf(out).drawImage(c, 0, 0, w * q, h * q);
+  return out;
 }
 
 // プレビュー
@@ -546,10 +640,21 @@ function drawNow() {
   const pw = Math.round(cssW * dpr), ph = Math.round(cssH * dpr);
   if (pv.width !== pw || pv.height !== ph) { pv.width = pw; pv.height = ph; }
   const aiTag = S.bg === 'ai' ? (aiReady() ? 'ai' + aiResult.id : 'wait') : '';
-  const key = [pw, ph, S.bg, S.blur, S.dim, S.color, S.bg === 'blur' || S.bg === 'color' ? '' : [S.scale, S.cx, S.cy].join(), S.srcName, S.img.width, aiTag].join('|');
+  const key = [pw, ph, S.bg, S.aiRange, S.blur, S.dim, S.color, S.bg === 'blur' || S.bg === 'color' ? '' : [S.scale, S.cx, S.cy].join(), S.srcName, S.img.width, aiTag].join('|');
   if (S.bg === 'ai' && !aiReady()) scheduleAI();
   if (!bgCache || bgCache.key !== key) bgCache = { key, c: renderBg(pw, ph, S.thumb) };
   render(ctxOf(pv), pw, ph, S.thumb, bgCache.c);
+  if (ER.strokes.length) {
+    const k = compKey(pw, ph);
+    if (!ER.cur && ER.result && ER.result.key === k) ctxOf(pv).drawImage(ER.result.c, 0, 0);
+    else {
+      // 処理を待つ間(なぞっている間)は、消す範囲を赤で示す
+      const m = strokeMask(pw, ph), mx = m.getContext('2d');
+      mx.globalCompositeOperation = 'source-in'; mx.fillStyle = 'rgba(255,60,60,0.55)'; mx.fillRect(0, 0, pw, ph);
+      ctxOf(pv).drawImage(m, 0, 0);
+      if (!ER.cur && !(S.bg === 'ai' && !aiReady())) scheduleErase(k, pw, ph, bgCache.c);
+    }
+  }
   layoutGuide(cssW, cssH);
 }
 
@@ -575,8 +680,14 @@ function layoutGuide(w, h) {
 // ドラッグ・ピンチ・ホイール
 const pointers = new Map();
 let pinch = null;
+const toNorm = e => { const b = frame.getBoundingClientRect(); return [(e.clientX - b.left) / b.width, (e.clientY - b.top) / b.height]; };
 frame.addEventListener('pointerdown', e => {
   frame.setPointerCapture(e.pointerId);
+  if (ER.on) {
+    if (ER.cur) return;
+    ER.cur = { size: ER.size, pts: [toNorm(e)] }; ER.strokes.push(ER.cur); draw();
+    return;
+  }
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (pointers.size === 2) {
     const [a, b] = [...pointers.values()];
@@ -584,6 +695,7 @@ frame.addEventListener('pointerdown', e => {
   }
 });
 frame.addEventListener('pointermove', e => {
+  if (ER.on) { if (ER.cur) { ER.cur.pts.push(toNorm(e)); draw(); } return; }
   const p = pointers.get(e.pointerId); if (!p) return;
   const nx = e.clientX, ny = e.clientY;
   if (pointers.size === 1) {
@@ -596,11 +708,14 @@ frame.addEventListener('pointermove', e => {
   p.x = nx; p.y = ny;
   draw();
 });
-const endPtr = e => { pointers.delete(e.pointerId); if (pointers.size < 2) pinch = null; };
+const endPtr = e => {
+  if (ER.cur) { ER.cur = null; ER.ver++; syncErase(); draw(); }
+  pointers.delete(e.pointerId); if (pointers.size < 2) pinch = null;
+};
 frame.addEventListener('pointerup', endPtr);
 frame.addEventListener('pointercancel', endPtr);
-frame.addEventListener('wheel', e => { e.preventDefault(); setScale(S.scale * Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
-frame.addEventListener('dblclick', () => { S.cx = 0.5; S.cy = 0.5; draw(); });
+frame.addEventListener('wheel', e => { e.preventDefault(); if (ER.on) return; setScale(S.scale * Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+frame.addEventListener('dblclick', () => { if (ER.on) return; S.cx = 0.5; S.cy = 0.5; draw(); });
 
 function setScale(v) { S.scale = Math.min(3, Math.max(0.2, v)); syncUI(); draw(); }
 function coverScale() {
@@ -656,12 +771,12 @@ document.querySelectorAll('[data-fmt]').forEach(b => b.addEventListener('click',
 document.querySelectorAll('[data-color]').forEach(b => b.addEventListener('click', () => { S.color = b.dataset.color; syncUI(); draw(); }));
 $('pickColor').addEventListener('click', () => { S.color = hex(S.edges.all); syncUI(); draw(); });
 $('color').addEventListener('input', e => { S.color = e.target.value; draw(); });
-for (const id of ['blur', 'dim', 'radius', 'shadow']) {
+for (const id of ['aiRange', 'blur', 'dim', 'radius', 'shadow']) {
   $(id).addEventListener('input', e => { S[id] = +e.target.value; syncUI(); draw(); });
 }
 
 const BG_HINT = {
-  ai: 'AIが画像の続きを描き足し、遠い部分はぼかしてなじませます。空・海・草地・壁などが得意で、人物や建物の続きは描けません。初回のみ約39MBをダウンロードします。',
+  ai: 'AIが画像の続きを描き足します。「AIで描く範囲」より外は端の色でなめらかに埋めます。画像の端にある模様をAIが伸ばしすぎるときは、範囲を狭くするか、消しゴムで消してください。初回のみ約39MBをダウンロードします。',
   mirror: '画像の端を鏡のように折り返して続きを作り、離れるほどぼかしてなじませます。',
   extend: '画像のいちばん端の色をそのまま外へ伸ばし、離れるほどぼかします。',
   blur: '画像を画面いっぱいに拡大して、全体をぼかした背景にします。',
@@ -681,6 +796,8 @@ function syncUI() {
   document.querySelectorAll('[data-fmt]').forEach(b => b.setAttribute('aria-pressed', b.dataset.fmt === S.fmt));
   $('blurField').hidden = !['blur', 'mirror', 'extend', 'ai'].includes(S.bg);
   $('aiStatus').hidden = S.bg !== 'ai';
+  $('aiRangeField').hidden = S.bg !== 'ai';
+  $('aiRangeVal').textContent = S.aiRange + '%';
   $('bgHint').textContent = BG_HINT[S.bg];
   $('colorField').hidden = S.bg !== 'color';
   $('guideRow').hidden = !S.phone;
@@ -715,8 +832,8 @@ function getWorker() {
     aiWorker = new Worker('ai-worker.js');
     aiWorker.onmessage = e => {
       const m = e.data;
-      if (m.type === 'progress') aiStatus(`AIモデルを読み込み中… ${Math.round(m.loaded / 1e6)} / ${Math.round(m.total / 1e6)} MB`);
-      else if (m.type === 'preparing') aiStatus('AIを準備中…');
+      if (m.type === 'progress') loadStatus(`AIモデルを読み込み中… ${Math.round(m.loaded / 1e6)} / ${Math.round(m.total / 1e6)} MB`);
+      else if (m.type === 'preparing') loadStatus('AIを準備中…');
       else { const cb = aiCallbacks.get(m.id); if (cb) { aiCallbacks.delete(m.id); cb(m); } }
     };
     aiWorker.onerror = e => {
@@ -726,6 +843,82 @@ function getWorker() {
   }
   return aiWorker;
 }
+const loadStatus = msg => { aiStatus(msg); $('eraseStatus').textContent = msg; };
+let inferQueue = Promise.resolve(), inferSeq = 0;
+function infer(w, h, rgba, known) {
+  const run = () => new Promise((resolve, reject) => {
+    const id = 'q' + (++inferSeq);
+    aiCallbacks.set(id, m => {
+      if (m.type === 'error') { reject(new Error(m.message)); return; }
+      aiLoaded = true;
+      const c = mk(m.w, m.h); ctxOf(c).putImageData(new ImageData(m.rgba, m.w, m.h), 0, 0);
+      resolve({ c, ms: m.ms });
+    });
+    getWorker().postMessage({ id, w, h, rgba, known }, [rgba.buffer, known.buffer]);
+  });
+  const p = inferQueue.then(run, run);
+  inferQueue = p.catch(() => {});
+  return p;
+}
+
+// 不要なものを消す(消しゴム)。なぞった線は壁紙の枠に対する割合で持つ
+const ER = { on: false, size: 0.06, strokes: [], cur: null, ver: 0, result: null, running: null, timer: 0 };
+function compKey(w, h) {
+  return [w, h, S.bg, S.aiRange, S.blur, S.dim, S.color, S.scale, S.cx, S.cy, S.radius, S.shadow, S.srcName, S.img.width,
+    S.bg === 'ai' && aiReady() ? aiResult.id : '-', ER.ver].join('|');
+}
+function strokeMask(w, h) {
+  const c = mk(w, h), x = c.getContext('2d'), m = Math.min(w, h);
+  x.strokeStyle = '#000'; x.lineCap = 'round'; x.lineJoin = 'round';
+  for (const st of ER.strokes) {
+    x.lineWidth = st.size * m;
+    x.beginPath();
+    st.pts.forEach(([px, py], i) => i ? x.lineTo(px * w, py * h) : x.moveTo(px * w, py * h));
+    if (st.pts.length === 1) x.lineTo(st.pts[0][0] * w + 0.5, st.pts[0][1] * h);
+    x.stroke();
+  }
+  return c;
+}
+function eraseRun(comp) {
+  const w = comp.width, h = comp.height;
+  const rgba = ctxOf(comp).getImageData(0, 0, w, h).data;
+  const md = strokeMask(w, h).getContext('2d').getImageData(0, 0, w, h).data;
+  const known = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) known[i] = md[i * 4 + 3] > 20 ? 0 : 255;
+  return infer(w, h, rgba, known).then(r => r.c);
+}
+function scheduleErase(k, pw, ph, bg) {
+  if (ER.running === k) return;
+  clearTimeout(ER.timer);
+  ER.timer = setTimeout(() => {
+    if (ER.running === k || compKey(pw, ph) !== k) return;
+    ER.running = k;
+    const comp = mk(pw, ph); render(ctxOf(comp), pw, ph, S.thumb, bg);
+    const st = $('eraseStatus'); st.hidden = false;
+    st.textContent = aiLoaded ? 'AIで消しています…' : 'AIモデルを読み込み中…(初回のみ約39MB)';
+    const t0 = performance.now();
+    eraseRun(comp).then(c => {
+      ER.result = { key: k, c };
+      st.textContent = `消しました(${((performance.now() - t0) / 1000).toFixed(1)}秒)`;
+    }, err => { st.textContent = '消せませんでした。通信状態を確かめて、もう一度なぞってください。(' + err.message + ')'; })
+      .finally(() => { if (ER.running === k) ER.running = null; draw(); });
+  }, 300);
+}
+function syncErase() {
+  const t = $('eraseToggle');
+  t.setAttribute('aria-pressed', ER.on);
+  t.textContent = ER.on ? '消しゴム: オン(なぞって消す)' : '消しゴムを使う';
+  frame.classList.toggle('erasing', ER.on);
+  $('eraseUndo').disabled = $('eraseClear').disabled = !ER.strokes.length;
+  $('brushVal').textContent = Math.round(ER.size * 100);
+  if (!ER.strokes.length) $('eraseStatus').hidden = true;
+}
+$('eraseToggle').addEventListener('click', () => { ER.on = !ER.on; syncErase(); });
+$('brush').addEventListener('input', e => { ER.size = e.target.value / 100; syncErase(); });
+$('eraseUndo').addEventListener('click', () => { ER.strokes.pop(); ER.ver++; ER.result = null; syncErase(); draw(); });
+$('eraseClear').addEventListener('click', () => { ER.strokes = []; ER.ver++; ER.result = null; syncErase(); draw(); });
+syncErase();
+
 function scheduleAI() {
   if (aiRunning && aiRunning.key === aiKey()) return;
   clearTimeout(aiTimer);
@@ -751,14 +944,7 @@ function runAI() {
     return Promise.resolve(aiResult);
   }
   aiStatus(aiLoaded ? 'AIで余白を描き足し中…' : 'AIモデルを読み込み中…(初回のみ約39MB)');
-  const p = new Promise((resolve, reject) => {
-    aiCallbacks.set(id, m => {
-      if (m.type === 'error') { reject(new Error(m.message)); return; }
-      const c = mk(m.w, m.h); ctxOf(c).putImageData(new ImageData(m.rgba, m.w, m.h), 0, 0);
-      resolve({ key, id, c, ms: m.ms });
-    });
-    getWorker().postMessage({ id, w, h, rgba, known }, [rgba.buffer, known.buffer]);
-  }).then(res => {
+  const p = infer(w, h, rgba, known).then(({ c, ms }) => ({ key, id, c, ms })).then(res => {
     aiLoaded = true; aiRunning = null; aiResult = res; bgCache = null;
     aiStatus(`AI補完が終わりました(${(res.ms / 1000).toFixed(1)}秒)`);
     draw();
@@ -779,8 +965,9 @@ $('save').addEventListener('click', async () => {
   try {
     await new Promise(r => setTimeout(r, 30));
     if (S.bg === 'ai' && !aiReady()) { btn.textContent = 'AI処理中…'; await runAI(); btn.textContent = '作成中…'; }
-    const out = mk(S.W, S.H);
+    let out = mk(S.W, S.H);
     render(ctxOf(out), S.W, S.H, S.img, renderBg(S.W, S.H, S.img));
+    if (ER.strokes.length) { btn.textContent = '消しゴムを反映中…'; out = await eraseRun(out); }
     const type = S.fmt === 'png' ? 'image/png' : 'image/jpeg';
     const blob = await new Promise(r => out.toBlob(r, type, 0.93));
     if (!blob) throw new Error('blob');

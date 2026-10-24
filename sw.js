@@ -1,5 +1,5 @@
 // オフライン対応: 一度開いたファイルを保存し、次回からは保存分を先に返して裏で更新する
-const CACHE = 'wallpaper-v2';
+const CACHE = 'wallpaper-v3';
 // AIのモデルと推論エンジンは大きい(約39MB)ので別に保存し、毎回の再取得はしない
 const AI_CACHE = 'wallpaper-ai-v1';
 const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './icon-180.png', './ai-worker.js'];
